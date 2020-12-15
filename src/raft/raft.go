@@ -217,7 +217,7 @@ func (rf *Raft) AppendEntries (args AppendEntriesArgs, reply *AppendEntriesReply
 	if rf.Role == 0 {
 		for _, entry := range args.Entries {
 			if entry.Command != nil {
-				append(rf.Logs, entry)
+				rf.Logs = append(rf.Logs, entry)
 			}
 		}
 		rf.HeartBeat = time.NewTimer(time.Duration(rand.Int63n(200)+400) * time.Millisecond)
@@ -288,7 +288,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 			Command: command,
 		}
 		var entries []LogEntry
-		append(entries, entry)
+		entries = append(entries, entry)
 		args := AppendEntriesArgs{
 			Term: rf.CurrentTerm,
 			LeaderId: rf.me,
@@ -312,7 +312,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 			}
 		}
 		if count > len(rf.peers)/2 {
-			
+
 		}
 		index = rf.Logs[len(rf.Logs)-1].Index+1
 		term = rf.CurrentTerm
