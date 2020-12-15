@@ -24,6 +24,7 @@ import "labrpc"
 // import "encoding/gob"
 
 import "time"
+import "math/rand"
 
 
 
@@ -41,6 +42,7 @@ type ApplyMsg struct {
 
 
 type LogEntry struct {
+	Index int
 	Term int
 	Command interface{}
 }
@@ -60,7 +62,7 @@ type Raft struct {
 
 	// record heart beats
 	HeartBeatTimeOut *time.Duration
-	LastHeartBeat *time.Timer
+	HeartBeat *time.Timer
 
 	// Persistent state on all servers
 	Role int 		// follower 0, candidate 1, leader 2
@@ -146,23 +148,21 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	if args.Term < rf.CurrentTerm {
-		relpy.Term = rf.CurrentTerm
+		reply.Term = rf.CurrentTerm
 		reply.VoteGranted = false
-	}
-	else {
+	} else {
 		if rf.Role == 1 && args.Term > rf.CurrentTerm {
 			rf.VotedFor = -1
 			rf.Role = 0
 		}
 		if rf.VotedFor == -1 || rf.VotedFor == args.CandidateId {
-			if len(rf.Logs) <= args.LastLogIndex && rf.Logs[len(rf.Logs)-1] <= args.LastLogTerm {
+			if len(rf.Logs) <= args.LastLogIndex && rf.Logs[len(rf.Logs)-1].Term <= args.LastLogTerm {
 				rf.VotedFor = args.CandidateId
 				reply.Term = args.Term
 				reply.VoteGranted = true
-			}
-			else {
+			} else {
 				rf.VotedFor = -1
-				reply.Term = rf.currentTerm
+				reply.Term = rf.CurrentTerm
 				reply.VoteGranted = false
 			}
 		}
@@ -195,8 +195,39 @@ type AppendEntriesReply struct {
 func (rf *Raft) AppendEntries (args AppendEntriesArgs, reply *AppendEntriesReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	// reset heart beat 
-	rf.LastHeartBeat = time.Now()
+	// reset heart beat
+	if args.Term < rf.CurrentTerm {
+		reply.Term = rf.CurrentTerm
+		reply.Success = false
+		return
+	} else if args.Term > rf.CurrentTerm{
+		rf.Role = 0
+		rf.CurrentTerm = args.Term
+	}
+	if rf.Logs[args.PrevLogIndex].Term != args.PrevLogTerm {
+		reply.Term = rf.CurrentTerm
+		reply.Success = false
+		return
+	}
+	for _, entry := range args.Entries {
+		if entry.Index <= len(rf.Logs) && rf.Logs[entry.Index-1].Term != entry.Term {
+			rf.Logs = rf.Logs[entry.Index-1:]
+		}
+	}
+	if rf.Role == 0 {
+		for _, entry := range args.Entries {
+			if entry.Command != nil {
+				append(rf.Logs, entry)
+			}
+		}
+		rf.HeartBeat = time.NewTimer(time.Duration(rand.Int63n(200)+400) * time.Millisecond)
+		go rf.FollowerLoop()
+	}
+	if args.LeaderCommit > rf.commitIndex {
+		rf.commitIndex = args.LeaderCommit
+	}
+	reply.Term = args.Term
+	reply.Success = true
 }
 
 //
@@ -221,7 +252,7 @@ func (rf *Raft) sendRequestVote(server int, args RequestVoteArgs, reply *Request
 	return ok
 }
 
-func (rf *Raft) sendAppendEntries(server int, args AppendEntriesArgs, reply *AppendEntriesReply) {
+func (rf *Raft) sendAppendEntries(server int, args AppendEntriesArgs, reply *AppendEntriesReply) bool {
 	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
 	return ok
 }
@@ -249,10 +280,42 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	if rf.Role != 2 {
 		isLeader = false
 		index = len(rf.Logs)
-		term = rf.currentTerm 
-	}
-	else {
+		term = rf.CurrentTerm
+	} else {
+		entry := LogEntry{
+			Index:   rf.Logs[len(rf.Logs)-1].Index+1,
+			Term:    rf.CurrentTerm,
+			Command: command,
+		}
+		var entries []LogEntry
+		append(entries, entry)
+		args := AppendEntriesArgs{
+			Term: rf.CurrentTerm,
+			LeaderId: rf.me,
+			PrevLogIndex: rf.Logs[len(rf.Logs)-1].Index,
+			PrevLogTerm: rf.Logs[len(rf.Logs)-1].Term,
+			Entries: entries,
+			LeaderCommit: rf.commitIndex,
+		}
+		reply := &AppendEntriesReply{
+			Term:    0,
+			Success: false,
+		}
 
+		count := 0
+		for i := 0; i <= len(rf.peers); i++ {
+			if i != rf.me {
+				rf.sendAppendEntries(rf.me, args, reply)
+				if reply.Success == true {
+					count++
+				}
+			}
+		}
+		if count > len(rf.peers)/2 {
+			
+		}
+		index = rf.Logs[len(rf.Logs)-1].Index+1
+		term = rf.CurrentTerm
 	}
 
 	return index, term, isLeader
@@ -287,10 +350,31 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.me = me
 
 	// Your initialization code here.
-
+	rf.Role = 0
+	rf.VotedFor = -1
+	rf.HeartBeat = time.NewTimer(time.Duration(rand.Int63n(200) + 400)*time.Millisecond)
+	go rf.FollowerLoop()
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 
 
 	return rf
+}
+
+func (rf *Raft) FollowerLoop() {
+	for {
+		select {
+		 case <-rf.HeartBeat.C :
+			 //rf.HeartBeat = time.NewTimer(time.Duration(rand.Int63n(200) + 400)*time.Millisecond)
+			 go rf.CandidateLoop()
+		}
+	}
+}
+
+func (rf *Raft) CandidateLoop() {
+
+}
+
+func (rf *Raft) LeaderLoop() {
+
 }
