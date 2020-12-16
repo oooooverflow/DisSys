@@ -2,7 +2,9 @@
 <project version="4">
   <component name="ChangeListManager">
     <list default="true" id="558ac743-39b1-4d9c-ab46-81873a9bc231" name="Default" comment="">
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/raft/raft.go" beforeDir="false" afterPath="$PROJECT_DIR$/src/raft/raft.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/raft/util.go" beforeDir="false" afterPath="$PROJECT_DIR$/src/raft/util.go" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -199,7 +201,7 @@
     <configuration name="go test raft" type="GoTestRunConfiguration" factoryName="Go Test" nameIsGenerated="true">
       <module name="NJU-DisSys-2017" />
       <working_directory value="$PROJECT_DIR$" />
-      <go_parameters value="-run Election" />
+      <go_parameters value="-run TestReElection" />
       <framework value="gotest" />
       <kind value="DIRECTORY" />
       <directory value="$PROJECT_DIR$/src/raft" />
