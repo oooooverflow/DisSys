@@ -421,8 +421,12 @@ func (rf *Raft) CandidateLoop() {
 						VoteGranted: false,
 					}
 
-					rf.sendRequestVote(i, args, reply)
-					rep <- reply
+					ok := rf.sendRequestVote(i, args, reply)
+					DPrintf("peer %d candidate loop from peer %d with ok = %t", rf.me, i, ok )
+					DPrintf("candidate %d receive vote from %d with vote result %t\n", rf.me, i, reply.VoteGranted)
+					//if ok {
+						rep <- reply
+					//}
 				}(i)
 			}
 		}
@@ -432,6 +436,7 @@ func (rf *Raft) CandidateLoop() {
 		for i := 0; i < len(rf.peers)-1; i++ {
 			select {
 				case <-rf.ElectionTimeOut.C:
+					//DPrintf("peer %d, 11111\n", rf.me)
 					if rf.Role == 1 {
 						flag = 1
 						break
@@ -439,8 +444,13 @@ func (rf *Raft) CandidateLoop() {
 					break
 				default:
 					result := <-rep
+					//DPrintf("peer %d, 22222\n", rf.me)
 					if result.VoteGranted {
 						count++
+						if count > len(rf.peers)/2 && rf.Role == 1 {
+							flag = 2
+							break
+						}
 					} else {
 						if result.Term > maxTerm {
 							maxTerm = result.Term
@@ -509,7 +519,8 @@ func (rf *Raft) HeartbeatLoop () {
 						Success: false,
 					}
 					DPrintf("leader %d broadcast heartbeat to peer %d\n", rf.me, i)
-					rf.sendAppendEntries(i, args, reply)
+					ok := rf.sendAppendEntries(i, args, reply)
+					DPrintf("peer %d append entry from peer %d with ok = %t", rf.me, i, ok )
 					DPrintf("leader %d receive reply from peer %d\n", rf.me, i)
 				}(i)
 			} else {
