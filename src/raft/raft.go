@@ -155,23 +155,23 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	if args.Term < rf.CurrentTerm {
-		DPrintf("..............\n")
+		//DPrintf("..............\n")
 		reply.Term = rf.CurrentTerm
 		reply.VoteGranted = false
 	} else {
 		if rf.Role == 0 || (rf.Role == 1 && args.Term > rf.CurrentTerm) {
-			DPrintf("-----------\n")
+			//DPrintf("-----------\n")
 			rf.VotedFor = -1
 			rf.Role = 0
 		}
 		if rf.VotedFor == -1 || rf.VotedFor == args.CandidateId {
 			if args.LastLogIndex == 0 || (args.LastLogIndex <= len(rf.Logs) && rf.Logs[len(rf.Logs)-1].Term <= args.LastLogTerm) {
-				DPrintf("*************\n")
+				//DPrintf("*************\n")
 				rf.VotedFor = args.CandidateId
 				reply.Term = args.Term
 				reply.VoteGranted = true
 			} else {
-				DPrintf("++++++++++++++\n")
+				//DPrintf("++++++++++++++\n")
 				rf.VotedFor = -1
 				reply.Term = rf.CurrentTerm
 				reply.VoteGranted = false
@@ -387,7 +387,9 @@ func (rf *Raft) FollowerLoop() {
 	for rf.Role == 0 {
 		select {
 		 	case <-rf.HeartBeat.C :
-				rf.ElectionTimeOut = time.NewTimer(time.Duration(rand.Int63n(200) + 400)*time.Millisecond)
+		 		rf.mu.Lock()
+				rf.ElectionTimeOut = time.NewTimer(time.Duration(rand.Int63n(200) + 100)*time.Millisecond)
+				rf.mu.Unlock()
 		 		rf.CandidateLoop()
 	 		default:
 		}
@@ -399,9 +401,11 @@ func (rf *Raft) CandidateLoop() {
 	rf.mu.Lock()
 	rf.Role = 1
 	rf.VotedFor = rf.me
-	rf.CurrentTerm += 1
 	rf.mu.Unlock()
 	for rf.Role == 1 {
+		rf.mu.Lock()
+		rf.CurrentTerm += 1
+		rf.mu.Unlock()
 		rep := make(chan *RequestVoteReply, len(rf.peers)-1)
 		for i := 0; i < len(rf.peers); i++ {
 			if i != rf.me {
@@ -420,13 +424,13 @@ func (rf *Raft) CandidateLoop() {
 						Term:        0,
 						VoteGranted: false,
 					}
-
+					DPrintf("peer %d request vote to peer %d", rf.me, i)
 					ok := rf.sendRequestVote(i, args, reply)
-					DPrintf("peer %d candidate loop from peer %d with ok = %t", rf.me, i, ok )
-					DPrintf("candidate %d receive vote from %d with vote result %t\n", rf.me, i, reply.VoteGranted)
-					//if ok {
+					DPrintf("peer %d receive vote from peer %d with ok = %t", rf.me, i, ok)
+					if ok {
+						DPrintf("candidate %d receive vote from %d with vote result %t\n", rf.me, i, reply.VoteGranted)
 						rep <- reply
-					//}
+					}
 				}(i)
 			}
 		}
@@ -436,15 +440,14 @@ func (rf *Raft) CandidateLoop() {
 		for i := 0; i < len(rf.peers)-1; i++ {
 			select {
 				case <-rf.ElectionTimeOut.C:
-					//DPrintf("peer %d, 11111\n", rf.me)
+					DPrintf("peer %d with role %d election timeout retry election\n", rf.me, rf.Role)
 					if rf.Role == 1 {
 						flag = 1
 						break
 					}
 					break
-				default:
-					result := <-rep
-					//DPrintf("peer %d, 22222\n", rf.me)
+				case result := <-rep :
+					DPrintf("peer %d role %d receive one vote\n", rf.me, rf.Role)
 					if result.VoteGranted {
 						count++
 						if count > len(rf.peers)/2 && rf.Role == 1 {
@@ -456,13 +459,14 @@ func (rf *Raft) CandidateLoop() {
 							maxTerm = result.Term
 						}
 					}
+					break
 			}
 			if flag != 0 {
 				break
 			}
 		}
 		if flag == 1 {
-			rf.ElectionTimeOut.Reset(time.Duration(rand.Int63n(200)+400) * time.Millisecond)
+			rf.ElectionTimeOut.Reset(time.Duration(rand.Int63n(200)+100) * time.Millisecond)
 			continue
 		}
 		rf.mu.Lock()
@@ -521,7 +525,9 @@ func (rf *Raft) HeartbeatLoop () {
 					DPrintf("leader %d broadcast heartbeat to peer %d\n", rf.me, i)
 					ok := rf.sendAppendEntries(i, args, reply)
 					DPrintf("peer %d append entry from peer %d with ok = %t", rf.me, i, ok )
-					DPrintf("leader %d receive reply from peer %d\n", rf.me, i)
+					if ok {
+						DPrintf("leader %d receive reply from peer %d\n", rf.me, i)
+					}
 				}(i)
 			} else {
 				go func(i int) {
