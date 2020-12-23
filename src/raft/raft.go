@@ -161,7 +161,7 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
 	DPrintf("peer %d with role %d enter function request vote\n", rf.me, rf.Role)
 	defer rf.mu.Unlock()
-	if args.Term <= rf.CurrentTerm  {//|| (rf.Role == 1 && rf.CurrentTerm == args.Term)
+	if args.Term < rf.CurrentTerm || (rf.Role == 1 && rf.CurrentTerm == args.Term) {
 		reply.Term = rf.CurrentTerm
 		reply.VoteGranted = false
 	} else {
@@ -171,7 +171,7 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 			rf.Role = 0
 		}
 		if rf.VotedFor == -1 || rf.VotedFor == args.CandidateId {
-			if args.LastLogIndex == 0 || (args.LastLogIndex <= len(rf.Logs) && rf.Logs[len(rf.Logs)-1].Term <= args.LastLogTerm) {
+			if args.LastLogIndex == 0 || len(rf.Logs) == 0 || rf.Logs[len(rf.Logs)-1].Term <= args.LastLogTerm || (rf.Logs[len(rf.Logs)-1].Term == args.LastLogTerm && len(rf.Logs) <= args.LastLogIndex) {
 				rf.VotedFor = args.CandidateId
 				reply.Term = args.Term
 				reply.VoteGranted = true
@@ -536,7 +536,7 @@ func (rf *Raft) HeartbeatLoop () {
 			}
 			if rf.NextIndex[i] == -1 {
 				go func(i int) {
-					rf.mu.Lock()
+					//rf.mu.Lock()
 					args := AppendEntriesArgs{
 						Term:         rf.CurrentTerm,
 						LeaderId:     rf.me,
@@ -553,14 +553,14 @@ func (rf *Raft) HeartbeatLoop () {
 						Term:    0,
 						Success: false,
 					}
-					rf.mu.Unlock()
+					//rf.mu.Unlock()
 					DPrintf("leader %d broadcast heartbeat to peer %d\n", rf.me, i)
 					ok := rf.sendAppendEntries(i, args, reply)
 					DPrintf("peer %d receive heartbeat reply from peer %d with ok = %t", rf.me, i, ok )
 				}(i)
 			} else {
 				go func(i int) {
-					rf.mu.Lock()
+					//rf.mu.Lock()
 					args := AppendEntriesArgs{
 						Term:         rf.CurrentTerm,
 						LeaderId:     rf.me,
@@ -573,14 +573,14 @@ func (rf *Raft) HeartbeatLoop () {
 						Term:    0,
 						Success: false,
 					}
-					rf.mu.Unlock()
+					//rf.mu.Unlock()
 					DPrintf("leader %d send entries to peer %d\n", rf.me, i)
 					ok := rf.sendAppendEntries(i, args, reply)
 					DPrintf("peer %d receive append entry reply from peer %d with ok = %t", rf.me, i, ok)
-					rf.mu.Lock()
+					//rf.mu.Lock()
 					if ok && !reply.Success {
 						if reply.Term > rf.CurrentTerm {
-							rf.mu.Unlock()
+							//rf.mu.Unlock()
 							DPrintf("reply term > rf.current term, become follower")
 							go rf.FollowerLoop()
 							return
@@ -593,14 +593,16 @@ func (rf *Raft) HeartbeatLoop () {
 						}
 					} else if ok && reply.Success {
 						rf.MatchIndex[i] = len(rf.Logs)
+						//rf.mu.Unlock()
 						matchNum <- rf.MatchIndex[i]
+						//rf.mu.Lock()
 						DPrintf("leader %d successfully add a match index into matchNum !", rf.me)
 						rf.NextIndex[i] = -1
 						if rf.MatchIndex[i] > rf.CommitIndex {
 							rf.CommitIndex = rf.MatchIndex[i]
 						}
 					}
-					rf.mu.Unlock()
+					//rf.mu.Unlock()
 				}(i)
 			}
 		}
