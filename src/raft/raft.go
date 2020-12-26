@@ -31,9 +31,9 @@ import "labrpc"
 import "time"
 import "math/rand"
 
-const Heartbeat = 150
-const Election = 150
-const Interval = 150
+const Heartbeat = 400
+const Election = 400
+const Interval = 200
 
 
 
@@ -256,14 +256,16 @@ func (rf *Raft) AppendEntries (args AppendEntriesArgs, reply *AppendEntriesReply
 	}
 	if args.PrevLogIndex != 0 && args.PrevLogIndex <= len(rf.Logs) && rf.Logs[args.PrevLogIndex-1].Term != args.PrevLogTerm {
 		reply.Term = rf.Logs[args.PrevLogIndex-1].Term
-		for k := 0; k < len(rf.Logs); k++ {
-			if rf.Logs[k].Term == reply.Term {
-				reply.FirstIndex = k+1
+		k := args.PrevLogIndex
+		for ; k > 0; k-- {
+			if rf.Logs[k-1].Term != reply.Term {
 				break
 			}
 		}
+		DPrintf("peer %d k = %d", rf.me, k)
+		reply.FirstIndex = k+1
 		reply.Success = false
-		DPrintf("peer %d with term %d reject peer %d with term %d because of log mismatch in index %d\n", rf.me, rf.CurrentTerm, args.LeaderId, args.Term, args.PrevLogIndex)
+		DPrintf("peer %d with term %d reject peer %d with term %d because of log mismatch in index %d, reply.term=%d, reply.FirstIndex=%d\n", rf.me, rf.CurrentTerm, args.LeaderId, args.Term, args.PrevLogIndex, reply.Term, reply.FirstIndex)
 		return
 	}
 	if args.PrevLogIndex > len(rf.Logs) {
@@ -275,22 +277,29 @@ func (rf *Raft) AppendEntries (args AppendEntriesArgs, reply *AppendEntriesReply
 			return
 		} else {
 			reply.Term = rf.Logs[len(rf.Logs)-1].Term
-			for k := 0; k < len(rf.Logs); k++ {
-				if rf.Logs[k].Term == reply.Term {
-					reply.FirstIndex = k+1
+			k := len(rf.Logs)
+			for ; k > 0; k-- {
+				if rf.Logs[k-1].Term != reply.Term {
 					break
 				}
 			}
+			DPrintf("peer %d k = %d", rf.me, k)
+			reply.FirstIndex = k+1
 			reply.Success = false
-			DPrintf("peer %d with term %d reject peer %d with term %d because of log mismatch, len(log)=%d, args.PrevLogIndex=%d", rf.me, rf.CurrentTerm, args.LeaderId, args.Term, len(rf.Logs), args.PrevLogIndex)
+			DPrintf("peer %d with term %d reject peer %d with term %d because of log mismatch, len(log)=%d, args.PrevLogIndex=%d, reply.term=%d, reply.FirstIndex=%d", rf.me, rf.CurrentTerm, args.LeaderId, args.Term, len(rf.Logs), args.PrevLogIndex, reply.Term, reply.FirstIndex)
 			return
 		}
 	}
 	if rf.Role == 0 {
 		// append entries
-		if len(rf.Logs) != 0 && args.PrevLogIndex != 0 {
-			rf.Logs = rf.Logs[:args.PrevLogIndex]
-			rf.persist()
+		if len(rf.Logs) != 0 {
+			if args.PrevLogIndex != 0 {
+				rf.Logs = rf.Logs[:args.PrevLogIndex]
+				rf.persist()
+			} else {
+				rf.Logs = []*LogEntry{}
+				rf.persist()
+			}
 		}
 		for _, entry := range args.Entries {
 				DPrintf("peer %d append new logs from leader %d with index %d", rf.me, args.LeaderId, entry.Index)
@@ -308,10 +317,10 @@ func (rf *Raft) AppendEntries (args AppendEntriesArgs, reply *AppendEntriesReply
 			DPrintf("update %d 's commitIndex to len(rf.Logs) with value %d", rf.me, len(rf.Logs))
 		}
 	}
-	DPrintf("peer %d with committed index %d logs: ", rf.me, rf.CommitIndex)
-	for j := 0; j < len(rf.Logs); j++ {
-		DPrintf("peer %d: index: %d term: %d cmd: %d",rf.me  ,rf.Logs[j].Index, rf.Logs[j].Term, rf.Logs[j].Command.(int))
-	}
+	// DPrintf("peer %d with committed index %d logs: ", rf.me, rf.CommitIndex)
+	// for j := 0; j < len(rf.Logs); j++ {
+	// 	DPrintf("peer %d: index: %d term: %d cmd: %d",rf.me  ,rf.Logs[j].Index, rf.Logs[j].Term, rf.Logs[j].Command.(int))
+	// }
 	reply.Term = args.Term
 	reply.Success = true
 }
@@ -598,65 +607,80 @@ func (rf *Raft) HeartbeatLoop () {
 			if i == rf.me {
 				continue
 			}
-			go rf.SendEntry(i)
+			rf.mu.Lock()
+			args := AppendEntriesArgs{
+				Term:         rf.CurrentTerm,
+				LeaderId:     rf.me,
+				PrevLogIndex: rf.NextIndex[i]-1,
+				PrevLogTerm:  0,
+				Entries:      nil,
+				LeaderCommit: rf.CommitIndex,
+			}
+			args.Entries = rf.Logs[rf.NextIndex[i]-1:]
+			if args.PrevLogIndex > 0 {
+				args.PrevLogTerm = rf.Logs[args.PrevLogIndex-1].Term
+			}
+			length := len(rf.Logs)
+			rf.mu.Unlock()
+			go rf.SendEntry(i, args, length)
 		}
 		time.Sleep(time.Duration(100 * time.Millisecond))
 	}
 }
 
-func (rf *Raft) SendEntry (i int) {
-	rf.mu.Lock()
-	temp := len(rf.Logs)
-	args := AppendEntriesArgs{
-		Term:         rf.CurrentTerm,
-		LeaderId:     rf.me,
-		PrevLogIndex: rf.NextIndex[i]-1,
-		PrevLogTerm:  0,
-		Entries:      nil,
-		LeaderCommit: rf.CommitIndex,
-	}
+func (rf *Raft) SendEntry (i int, args AppendEntriesArgs, length int) {
+	//rf.mu.Lock()
+	//length := len(rf.Logs)
+	//args := AppendEntriesArgs{
+	//	Term:         rf.CurrentTerm,
+	//	LeaderId:     rf.me,
+	//	PrevLogIndex: rf.NextIndex[i]-1,
+	//	PrevLogTerm:  0,
+	//	Entries:      nil,
+	//	LeaderCommit: rf.CommitIndex,
+	//}
 	reply := &AppendEntriesReply{
 		Term:       0,
 		FirstIndex: 0,
 		Success:    false,
 	}
-	args.Entries = rf.Logs[rf.NextIndex[i]-1:]
-	if args.PrevLogIndex > 0 {
-		args.PrevLogTerm = rf.Logs[rf.NextIndex[i]-2].Term
-	}
-	rf.mu.Unlock()
-	DPrintf("leader %d broadcast heartbeat to peer %d with next index=%d\n", rf.me, i, rf.NextIndex[i])
+	DPrintf("leader %d with term %d broadcast heartbeat to peer %d with next index=%d\n", rf.me, rf.CurrentTerm, i, rf.NextIndex[i])
+	//rf.mu.Unlock()
 	ok := rf.sendAppendEntries(i, args, reply)
-	DPrintf("peer %d receive heartbeat reply from peer %d with ok = %t", rf.me, i, ok)
 	rf.mu.Lock()
+	DPrintf("peer %d receive with term %d heartbeat reply from peer %d with ok = %t", rf.me, rf.CurrentTerm, i, ok)
 	defer rf.mu.Unlock()
-	if rf.Role == 2 {
-		if ok && !reply.Success {
-			if reply.Term > rf.CurrentTerm {
+	if rf.CurrentTerm == args.Term && rf.Role == 2 && ok {
+		if !reply.Success {
+			DPrintf("peer %d rf.CurrentTerm=%d, reply.Term=%d", rf.me, rf.CurrentTerm, reply.Term)
+			if reply.Term > rf.CurrentTerm  { //|| (reply.Term > 0 && reply.FirstIndex == 0)
 				DPrintf("reply term > rf.current term, become follower")
 				rf.Role = 0
 				return
 			} else {
 				// deal with log mismatch
-				DPrintf("leader %d with role log mismatch with peer %d, reply.Term=%d, reply.FirstIndex=%d, len(rf.Logs)=%d", rf.me, i, reply.Term, reply.FirstIndex, len(rf.Logs))
+				DPrintf("leader %d log mismatch with peer %d, reply.Term=%d, reply.FirstIndex=%d, len(rf.Logs)=%d", rf.me, i, reply.Term, reply.FirstIndex, len(rf.Logs))
 				if reply.Term == 0 {
 					rf.NextIndex[i] = 1
+					rf.MatchIndex[i] = 0
 				} else {
-					if reply.FirstIndex <= len(rf.Logs) {
+					if reply.FirstIndex <= length {
 						if rf.Logs[reply.FirstIndex-1].Term == reply.Term {
 							rf.NextIndex[i] = reply.FirstIndex + 1
 						} else {
 							rf.NextIndex[i] = reply.FirstIndex
 						}
+						//rf.NextIndex[i] = reply.FirstIndex
+						rf.MatchIndex[i] = rf.NextIndex[i]-1
 					} else {
 						DPrintf("peer %d error: reply.FirstIndex > len(rf.Logs)", rf.me)
 					}
 				}
 			}
-		} else if ok && reply.Success && rf.NextIndex[i] <= len(rf.Logs) {
+		} else if rf.NextIndex[i] <= length {
 			DPrintf("append entry reply success with ok=true, update %d 's match index to %d", i, len(rf.Logs))
-			rf.MatchIndex[i] = temp
-			rf.NextIndex[i] = temp+1
+			rf.MatchIndex[i] = length
+			rf.NextIndex[i] = length+1
 		}
 	}
 }
@@ -677,7 +701,7 @@ func (rf *Raft) Apply () {
 		} else {
 			rf.mu.Unlock()
 		}
-		time.Sleep(time.Duration(50 * time.Millisecond))
+		//time.Sleep(time.Duration(50 * time.Millisecond))
 	}
 }
 
