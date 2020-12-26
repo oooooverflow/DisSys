@@ -137,7 +137,6 @@ func (cfg *config) start1(i int) {
 	} else {
 		cfg.saved[i] = MakePersister()
 	}
-
 	cfg.mu.Unlock()
 
 	// listen to messages from Raft indicating newly committed messages.

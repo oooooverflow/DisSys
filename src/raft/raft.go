@@ -400,11 +400,15 @@ func (rf *Raft) FollowerLoop() {
 		select {
 		 	case <-rf.HeartBeat.C :
 		 		rf.mu.Lock()
-				rf.ElectionTimeOut = time.NewTimer(time.Duration(rand.Int63n(Interval) + Election)*time.Millisecond)
 				rf.Role = 1
+				//rf.ElectionTimeOut.Reset(time.Duration(rand.Int63n(Interval) + Election)*time.Millisecond)
 				rf.mu.Unlock()
-		 		go rf.CandidateLoop()
-				return
+		 		rf.CandidateLoop()
+				rf.mu.Lock()
+				rf.Role = 0
+				rf.HeartBeat.Reset(time.Duration(rand.Int63n(Interval) + Heartbeat)*time.Millisecond)
+				rf.mu.Unlock()
+				break
 		}
 	}
 }
@@ -413,6 +417,7 @@ func (rf *Raft) CandidateLoop() {
 	defer DPrintf("peer %d leave candidate loop\n", rf.me)
 	rf.mu.Lock()
 	DPrintf("peer %d becomes candidate \n", rf.me)
+	rf.ElectionTimeOut = time.NewTimer(time.Duration(rand.Int63n(Interval) + Election)*time.Millisecond)
 	rf.VotedFor = rf.me
 	peerNum := len(rf.peers)
 	rf.mu.Unlock()
@@ -432,7 +437,7 @@ func (rf *Raft) CandidateLoop() {
 			if rf.Role == 0 {
 				DPrintf("peer %d become follower from candidate", rf.me)
 				rf.mu.Unlock()
-				go rf.FollowerLoop()
+				//go rf.FollowerLoop()
 				return
 			}
 			rf.ElectionTimeOut.Reset(time.Duration(rand.Int63n(Interval)+Election) * time.Millisecond)
@@ -443,14 +448,14 @@ func (rf *Raft) CandidateLoop() {
 		if count > len(rf.peers)/2 && rf.Role == 1 {
 			rf.Role = 2
 			rf.mu.Unlock()
-			go rf.LeaderLoop()
+			rf.LeaderLoop()
 			break
 		} else {
 			rf.VotedFor = -1
 			rf.CurrentTerm = maxTerm
 			rf.mu.Unlock()
 			DPrintf("peer %d become follower from candidate", rf.me)
-			go rf.FollowerLoop()
+			//go rf.FollowerLoop()
 			break
 		}
 	}
@@ -494,10 +499,7 @@ func (rf *Raft) Collect (peerNum int, rep chan *RequestVoteReply) (int, int, int
 		select {
 		case <-rf.ElectionTimeOut.C:
 			DPrintf("peer %d with role %d election timeout retry election\n", rf.me, rf.Role)
-			//if rf.Role == 1 {
-				flag = 1
-				break
-			//}
+			flag = 1
 			break
 		case result := <-rep :
 			DPrintf("peer %d role %d receive one vote\n", rf.me, rf.Role)
@@ -535,25 +537,25 @@ func (rf *Raft) LeaderLoop() {
 		rf.MatchIndex = append(rf.MatchIndex, 0)
 	}
 	rf.mu.Unlock()
-	go rf.HeartbeatLoop()
+	rf.HeartbeatLoop()
 }
 
 func (rf *Raft) HeartbeatLoop () {
+	defer DPrintf("peer %d become follower from leader", rf.me)
 	go rf.Match()
 	for !rf.isKilled && rf.Role == 2 {
-		rf.mu.Lock()
 		for i := 0; i < len(rf.peers); i++ {
 			if i == rf.me {
 				continue
 			}
 			go rf.SendEntry(i)
 		}
-		rf.mu.Unlock()
-		if rf.Role == 0 {
-			DPrintf("peer %d become follower from leader", rf.me)
-			go rf.FollowerLoop()
-			return
-		}
+		//rf.mu.Lock()
+		//if rf.Role == 0 {
+		//	rf.mu.Unlock()
+		//	return
+		//}
+		//rf.mu.Unlock()
 		time.Sleep(time.Duration(100 * time.Millisecond))
 	}
 }
@@ -584,14 +586,12 @@ func (rf *Raft) SendEntry (i int) {
 		if ok && !reply.Success {
 			if reply.Term > rf.CurrentTerm {
 				DPrintf("reply term > rf.current term, become follower")
-				go rf.FollowerLoop()
+				rf.Role = 0
 				return
 			} else {
 				// log mismatch reply.Term == -1
 				DPrintf("reply.term should be -1. then its real value is %d", reply.Term)
-				//if rf.NextIndex[i] != 1 {
-					rf.NextIndex[i]--
-				//}
+				rf.NextIndex[i]--
 			}
 		} else if ok && reply.Success && rf.NextIndex[i] <= len(rf.Logs) {
 			DPrintf("append entry reply success with ok=true, update %d 's match index to %d", i, len(rf.Logs))
