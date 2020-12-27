@@ -689,18 +689,30 @@ func (rf *Raft) Apply () {
 		rf.mu.Lock()
 		if rf.LastApplied < rf.CommitIndex {
 			DPrintf("peer %d LastApplied %d < CommitIndex %d", rf.me, rf.LastApplied, rf.CommitIndex)
-			rf.LastApplied++
-			tempMsg := ApplyMsg{
-				Index:   rf.LastApplied,
-				Command: rf.Logs[rf.LastApplied-1].Command,
+			//rf.LastApplied++
+			//tempMsg := ApplyMsg{
+			//	Index:   rf.LastApplied,
+			//	Command: rf.Logs[rf.LastApplied-1].Command,
+			//}
+			prevApllied := rf.LastApplied+1
+			var commands []interface{}
+			rf.LastApplied = rf.CommitIndex
+			for i := prevApllied ; i <= rf.CommitIndex; i++ {
+				commands = append(commands, rf.Logs[i-1].Command)
 			}
 			rf.mu.Unlock()
-			rf.applyMsg <- tempMsg
+			for i, command := range commands {
+				tempMsg := ApplyMsg{
+					Index:   prevApllied+i,
+					Command: command,
+				}
+				rf.applyMsg <- tempMsg
+			}
 			DPrintf("peer %d apply message successfully", rf.me)
 		} else {
 			rf.mu.Unlock()
 		}
-		//time.Sleep(time.Duration(50 * time.Millisecond))
+		time.Sleep(time.Duration(50 * time.Millisecond))
 	}
 }
 
