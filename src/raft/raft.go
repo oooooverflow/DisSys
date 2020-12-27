@@ -435,6 +435,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.CommitIndex = 0
 	rf.LastApplied = 0
 	rf.Logs = []*LogEntry{}
+	rf.HeartBeat = time.NewTimer(time.Duration(rand.Int63n(Interval) + Heartbeat)*time.Millisecond)
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 
@@ -449,7 +450,7 @@ func (rf *Raft) FollowerLoop() {
 	rf.Role = 0
 	rf.VotedFor = -1
 	rf.persist()
-	rf.HeartBeat = time.NewTimer(time.Duration(rand.Int63n(Interval) + Heartbeat)*time.Millisecond)
+	//rf.HeartBeat = time.NewTimer(time.Duration(rand.Int63n(Interval) + Heartbeat)*time.Millisecond)
 	for !rf.isKilled && rf.Role == 0 {
 		select {
 		 	case <-rf.HeartBeat.C :
